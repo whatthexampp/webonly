@@ -1,0 +1,12 @@
+*.exe
+WebonlyDaemon
+*.so
+*.obj
+*.exp
+*.lib
+*.dll
+mod_webonly.so
+.DS_Store
+.idea/
+.vscode/
+*.swp
