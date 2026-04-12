@@ -88,6 +88,22 @@ func (Lex *Lexer) Next() Token {
 		Tok = Token{Type: Plus, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
 	case '-':
 		Tok = Token{Type: Minus, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
+	case '&':
+		if Lex.Peek() == '&' {
+			Prev := Lex.Char
+			Lex.Advance()
+			Tok = Token{Type: And, Lit: string(Prev) + string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
+		} else {
+			Tok = Token{Type: Illegal, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
+		}
+	case '|':
+		if Lex.Peek() == '|' {
+			Prev := Lex.Char
+			Lex.Advance()
+			Tok = Token{Type: Or, Lit: string(Prev) + string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
+		} else {
+			Tok = Token{Type: Illegal, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
+		}
 	case '!':
 		if Lex.Peek() == '=' {
 			Prev := Lex.Char
@@ -97,9 +113,33 @@ func (Lex *Lexer) Next() Token {
 			Tok = Token{Type: Bang, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
 		}
 	case '/':
+		if Lex.Peek() == '/' {
+			for Lex.Char != '\n' && Lex.Char != 0 {
+				Lex.Advance()
+			}
+			return Lex.Next()
+		} else if Lex.Peek() == '*' {
+			Lex.Advance()
+			Lex.Advance()
+			for Lex.Char != 0 {
+				if Lex.Char == '*' && Lex.Peek() == '/' {
+					Lex.Advance()
+					Lex.Advance()
+					break
+				}
+				if Lex.Char == '\n' {
+					Lex.Line++
+					Lex.Column = 0
+				}
+				Lex.Advance()
+			}
+			return Lex.Next()
+		}
 		Tok = Token{Type: Slash, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
 	case '*':
 		Tok = Token{Type: Ast, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
+	case '%':
+		Tok = Token{Type: Modulo, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
 	case '<':
 		Tok = Token{Type: Lt, Lit: string(Lex.Char), Line: Tok.Line, Column: Tok.Column}
 	case '>':
@@ -130,6 +170,79 @@ func (Lex *Lexer) Next() Token {
 		if Lex.IsAlpha(Lex.Char) {
 			Tok.Lit = Lex.ReadIdent()
 			Tok.Type = Lookup(Tok.Lit)
+			
+			if Tok.Lit == "html" {
+				LookPos := Lex.Pos
+				for LookPos < len(Lex.Input) {
+					Ch := Lex.Input[LookPos]
+					if Ch == ' ' || Ch == '\t' || Ch == '\n' || Ch == '\r' {
+						LookPos++
+					} else {
+						break
+					}
+				}
+				var NextCh byte = 0
+				if LookPos < len(Lex.Input) {
+					NextCh = Lex.Input[LookPos]
+				}
+
+				if NextCh == ':' {
+					for Lex.Char != ':' && Lex.Char != 0 {
+						if Lex.Char == '\n' {
+							Lex.Line++
+							Lex.Column = 0
+						}
+						Lex.Advance()
+					}
+					Lex.Advance()
+					
+					StartHtml := Lex.Pos
+					StartLine := Lex.Line
+					StartCol := Lex.Column
+					
+					for Lex.Char != 0 {
+						if Lex.Char == 'e' && strings.HasPrefix(Lex.Input[Lex.Pos:], "endhtml") {
+							HasSemi := false
+							if strings.HasPrefix(Lex.Input[Lex.Pos:], "endhtml;") {
+								HasSemi = true
+							}
+							
+							ValidEnd := false
+							if HasSemi {
+								ValidEnd = true
+							} else {
+								AfterPos := Lex.Pos + 7
+								if AfterPos >= len(Lex.Input) {
+									ValidEnd = true
+								} else {
+									AfterCh := Lex.Input[AfterPos]
+									if AfterCh == ' ' || AfterCh == '\t' || AfterCh == '\n' || AfterCh == '\r' {
+										ValidEnd = true
+									}
+								}
+							}
+							
+							if ValidEnd {
+								Text := Lex.Input[StartHtml:Lex.Pos]
+								AdvanceCount := 7
+								if HasSemi {
+									AdvanceCount = 8
+								}
+								for i := 0; i < AdvanceCount; i++ {
+									Lex.Advance()
+								}
+								return Token{Type: Html, Lit: Text, Line: StartLine, Column: StartCol}
+							}
+						}
+						if Lex.Char == '\n' {
+							Lex.Line++
+							Lex.Column = 0
+						}
+						Lex.Advance()
+					}
+					return Token{Type: Html, Lit: Lex.Input[StartHtml:Lex.Pos], Line: StartLine, Column: StartCol}
+				}
+			}
 			return Tok
 		} else if Lex.IsNum(Lex.Char) {
 			Tok.Type = Num
@@ -148,6 +261,10 @@ func (Lex *Lexer) ReadStr() string {
 		Lex.Advance()
 		if Lex.Char == '"' || Lex.Char == 0 {
 			break
+		}
+		if Lex.Char == '\n' {
+			Lex.Line++
+			Lex.Column = 0
 		}
 	}
 	return Lex.Input[Start:Lex.Pos]

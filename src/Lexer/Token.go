@@ -23,11 +23,14 @@ const (
 	Minus    TokenType = "-"
 	Ast      TokenType = "*"
 	Slash    TokenType = "/"
+	Modulo   TokenType = "%"
 	Bang     TokenType = "!"
 	Lt       TokenType = "<"
 	Gt       TokenType = ">"
 	Eq       TokenType = "=="
 	Neq      TokenType = "!="
+	And      TokenType = "&&"
+	Or       TokenType = "||"
 	Comma    TokenType = ","
 	Semi     TokenType = ";"
 	Lparen   TokenType = "("
@@ -39,6 +42,7 @@ const (
 	Func     TokenType = "Func"
 	True     TokenType = "True"
 	False    TokenType = "False"
+	Null     TokenType = "Null"
 	If       TokenType = "If"
 	Elseif   TokenType = "Elseif"
 	Else     TokenType = "Else"
@@ -46,13 +50,17 @@ const (
 	Ret      TokenType = "Ret"
 	End      TokenType = "End"
 	Class    TokenType = "Class"
+	Extends  TokenType = "Extends"
 	New      TokenType = "New"
+	Const    TokenType = "Const"
+	Enum     TokenType = "Enum"
 )
 
 var Keywords = map[string]TokenType{
 	"function": Func,
 	"true":     True,
 	"false":    False,
+	"null":     Null,
 	"if":       If,
 	"elseif":   Elseif,
 	"else":     Else,
@@ -60,7 +68,10 @@ var Keywords = map[string]TokenType{
 	"return":   Ret,
 	"end":      End,
 	"class":    Class,
+	"extends":  Extends,
 	"new":      New,
+	"const":    Const,
+	"enum":     Enum,
 }
 
 func Lookup(Identifier string) TokenType {

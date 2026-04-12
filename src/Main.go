@@ -101,12 +101,12 @@ func Handle(C net.Conn) {
 		},
 	}
 
-	Env.Set("echo", PrintFn)
-	Env.Set("__webonly_html_out", PrintFn)
-	Env.Set("HttpQuery", QueryFn)
+	Env.SetConst("echo", PrintFn)
+	Env.SetConst("__webonly_html_out", PrintFn)
+	Env.SetConst("HttpQuery", QueryFn)
 
 	for K, V := range Funcs.GetAll() {
-		Env.Set(K, V)
+		Env.SetConst(K, V)
 	}
 
 	Res := Evaluator.Eval(Prog, Env)

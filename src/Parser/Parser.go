@@ -10,6 +10,8 @@ import (
 const (
 	Lowest = iota
 	AssignPrec
+	LogicOr
+	LogicAnd
 	Equals
 	LessGt
 	Sum
@@ -21,6 +23,8 @@ const (
 
 var Precs = map[Lexer.TokenType]int{
 	Lexer.Assign:   AssignPrec,
+	Lexer.Or:       LogicOr,
+	Lexer.And:      LogicAnd,
 	Lexer.Eq:       Equals,
 	Lexer.Neq:      Equals,
 	Lexer.Lt:       LessGt,
@@ -29,6 +33,7 @@ var Precs = map[Lexer.TokenType]int{
 	Lexer.Minus:    Sum,
 	Lexer.Slash:    Prod,
 	Lexer.Ast:      Prod,
+	Lexer.Modulo:   Prod,
 	Lexer.Lparen:   Call,
 	Lexer.Dot:      Call,
 	Lexer.Lbracket: IndexPrec,
@@ -52,6 +57,7 @@ func Create(L *Lexer.Lexer) *Parser {
 	P.RegPre(Lexer.Ident, P.ParseIdent)
 	P.RegPre(Lexer.Num, P.ParseNum)
 	P.RegPre(Lexer.Str, P.ParseStr)
+	P.RegPre(Lexer.Null, P.ParseNull)
 	P.RegPre(Lexer.Bang, P.ParsePre)
 	P.RegPre(Lexer.Minus, P.ParsePre)
 	P.RegPre(Lexer.True, P.ParseBool)
@@ -66,10 +72,13 @@ func Create(L *Lexer.Lexer) *Parser {
 	P.RegIn(Lexer.Minus, P.ParseInfix)
 	P.RegIn(Lexer.Slash, P.ParseInfix)
 	P.RegIn(Lexer.Ast, P.ParseInfix)
+	P.RegIn(Lexer.Modulo, P.ParseInfix)
 	P.RegIn(Lexer.Eq, P.ParseInfix)
 	P.RegIn(Lexer.Neq, P.ParseInfix)
 	P.RegIn(Lexer.Lt, P.ParseInfix)
 	P.RegIn(Lexer.Gt, P.ParseInfix)
+	P.RegIn(Lexer.And, P.ParseInfix)
+	P.RegIn(Lexer.Or, P.ParseInfix)
 	P.RegIn(Lexer.Lparen, P.ParseCall)
 	P.RegIn(Lexer.Lbracket, P.ParseIndex)
 	P.RegIn(Lexer.Dot, P.ParseDot)
@@ -105,6 +114,10 @@ func (P *Parser) ParseStmt() Ast.Statement {
 		return P.ParseWhile()
 	case Lexer.Ret:
 		return P.ParseRet()
+	case Lexer.Const:
+		return P.ParseConst()
+	case Lexer.Enum:
+		return P.ParseEnum()
 	default:
 		return P.ParseExprStmt()
 	}
@@ -121,6 +134,15 @@ func (P *Parser) ParseClass() *Ast.ClassStmt {
 		return nil
 	}
 	Stmt.Name = &Ast.Ident{Token: P.Cur, Value: P.Cur.Lit}
+
+	if P.Peek.Type == Lexer.Extends {
+		P.Next()
+		if !P.Exp(Lexer.Ident) {
+			return nil
+		}
+		Stmt.Parent = &Ast.Ident{Token: P.Cur, Value: P.Cur.Lit}
+	}
+
 	if !P.Exp(Lexer.Colon) {
 		return nil
 	}
@@ -145,14 +167,59 @@ func (P *Parser) ParseClass() *Ast.ClassStmt {
 	return Stmt
 }
 
+func (P *Parser) ParseConst() *Ast.ConstStmt {
+	Stmt := &Ast.ConstStmt{Token: P.Cur}
+	if !P.Exp(Lexer.Ident) {
+		return nil
+	}
+	Stmt.Name = &Ast.Ident{Token: P.Cur, Value: P.Cur.Lit}
+	if !P.Exp(Lexer.Assign) {
+		return nil
+	}
+	P.Next()
+	Stmt.Value = P.ParseExpr(Lowest)
+	if P.Peek.Type == Lexer.Semi {
+		P.Next()
+	}
+	return Stmt
+}
+
+func (P *Parser) ParseEnum() *Ast.EnumStmt {
+	Stmt := &Ast.EnumStmt{Token: P.Cur}
+	if !P.Exp(Lexer.Ident) {
+		return nil
+	}
+	Stmt.Name = &Ast.Ident{Token: P.Cur, Value: P.Cur.Lit}
+	if !P.Exp(Lexer.Colon) {
+		return nil
+	}
+	P.Next()
+	Stmt.Cases = []*Ast.Ident{}
+	for !P.IsAtEnd(Lexer.End) && P.Cur.Type != Lexer.Eof {
+		if P.Cur.Type == Lexer.Ident {
+			Stmt.Cases = append(Stmt.Cases, &Ast.Ident{Token: P.Cur, Value: P.Cur.Lit})
+		} else if P.Cur.Type != Lexer.Comma {
+			P.Errs = append(P.Errs, fmt.Sprintf("Unexpected token in enum: %s at line %d", P.Cur.Type, P.Cur.Line))
+		}
+		P.Next()
+	}
+	if P.Cur.Type != Lexer.End {
+		P.Errs = append(P.Errs, fmt.Sprintf("Expected end, got %s at line %d", P.Cur.Type, P.Cur.Line))
+	}
+	if P.Peek.Type == Lexer.Semi {
+		P.Next()
+	}
+	return Stmt
+}
+
 func (P *Parser) ParseWhile() *Ast.WhileStmt {
 	Stmt := &Ast.WhileStmt{Token: P.Cur}
-	if !P.Exp(Lexer.Lbracket) {
+	if !P.Exp(Lexer.Lparen) {
 		return nil
 	}
 	P.Next()
 	Stmt.Cond = P.ParseExpr(Lowest)
-	if !P.Exp(Lexer.Rbracket) || !P.Exp(Lexer.Colon) {
+	if !P.Exp(Lexer.Rparen) || !P.Exp(Lexer.Colon) {
 		return nil
 	}
 	P.Next()
@@ -228,6 +295,10 @@ func (P *Parser) ParseStr() Ast.Expression {
 	return &Ast.StrLit{Token: P.Cur, Value: P.Cur.Lit}
 }
 
+func (P *Parser) ParseNull() Ast.Expression {
+	return &Ast.NullLit{Token: P.Cur}
+}
+
 func (P *Parser) ParseArrayLit() Ast.Expression {
 	A := &Ast.ArrayLit{Token: P.Cur}
 	A.Elems = P.ParseExprList(Lexer.Rbracket)
@@ -264,24 +335,24 @@ func (P *Parser) ParseGroup() Ast.Expression {
 
 func (P *Parser) ParseIf() Ast.Expression {
 	E := &Ast.IfExpr{Token: P.Cur, Elifs: []*Ast.ElseifBlock{}}
-	if !P.Exp(Lexer.Lbracket) {
+	if !P.Exp(Lexer.Lparen) {
 		return nil
 	}
 	P.Next()
 	E.Cond = P.ParseExpr(Lowest)
-	if !P.Exp(Lexer.Rbracket) || !P.Exp(Lexer.Colon) {
+	if !P.Exp(Lexer.Rparen) || !P.Exp(Lexer.Colon) {
 		return nil
 	}
 	P.Next()
 	E.Cons = P.ParseBlock(Lexer.Elseif, Lexer.Else, Lexer.End)
 	for P.Cur.Type == Lexer.Elseif {
 		Elif := &Ast.ElseifBlock{}
-		if !P.Exp(Lexer.Lbracket) {
+		if !P.Exp(Lexer.Lparen) {
 			return nil
 		}
 		P.Next()
 		Elif.Cond = P.ParseExpr(Lowest)
-		if !P.Exp(Lexer.Rbracket) || !P.Exp(Lexer.Colon) {
+		if !P.Exp(Lexer.Rparen) || !P.Exp(Lexer.Colon) {
 			return nil
 		}
 		P.Next()
@@ -345,6 +416,10 @@ func (P *Parser) ParseFuncDef() *Ast.FuncLit {
 
 func (P *Parser) ParseFunc() Ast.Expression {
 	F := &Ast.FuncLit{Token: P.Cur}
+	if P.Peek.Type == Lexer.Ident {
+		P.Next()
+		F.Name = P.Cur.Lit
+	}
 	if !P.Exp(Lexer.Lparen) {
 		return nil
 	}

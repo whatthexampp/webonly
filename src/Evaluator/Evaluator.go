@@ -26,6 +26,10 @@ func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 	case *Ast.WhileStmt:
 		//evaluate while loop until condition is false
 		return EvalWhile(N, Env)
+	case *Ast.ConstStmt:
+		return EvalConst(N, Env)
+	case *Ast.EnumStmt:
+		return EvalEnum(N, Env)
 	case *Ast.ExprStmt:
 		//evaluate a standalone expression statement
 		return Eval(N.Expr, Env)
@@ -48,6 +52,8 @@ func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 	case *Ast.StrLit:
 		//return a literal string object
 		return &Object.Str{Value: N.Value}
+	case *Ast.NullLit:
+		return NullObj
 	case *Ast.ArrayLit:
 		// evaluate all array elements to create a new array object
 		return EvalArray(N, Env)
@@ -66,6 +72,26 @@ func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 		Left := Eval(N.Left, Env)
 		if IsErr(Left) {
 			return Left
+		}
+		if N.Op == "&&" {
+			if !IsTruthy(Left) {
+				return Left
+			}
+			Right := Eval(N.Right, Env)
+			if IsErr(Right) {
+				return Right
+			}
+			return Right
+		}
+		if N.Op == "||" {
+			if IsTruthy(Left) {
+				return Left
+			}
+			Right := Eval(N.Right, Env)
+			if IsErr(Right) {
+				return Right
+			}
+			return Right
 		}
 		Right := Eval(N.Right, Env)
 		if IsErr(Right) {
@@ -101,7 +127,11 @@ func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 		return EvalIdent(N, Env)
 	case *Ast.FuncLit:
 		//create a new function object, capturing the current environment for closures
-		return &Object.Func{Params: N.Params, Env: Env, Body: N.Body}
+		FnObj := &Object.Func{Params: N.Params, Env: Env, Body: N.Body}
+		if N.Name != "" {
+			Env.SetConst(N.Name, FnObj)
+		}
+		return FnObj
 	case *Ast.CallExpr:
 		// evaluate the target function and its arguments, then execute the function call
 		Func := Eval(N.Func, Env)
@@ -170,13 +200,45 @@ func EvalWhile(W *Ast.WhileStmt, Env *Object.Environment) Object.Object {
 }
 
 func EvalClass(C *Ast.ClassStmt, Env *Object.Environment) Object.Object {
+	var ParentCls *Object.Class
+	if C.Parent != nil {
+		ParentObj, Ok := Env.Get(C.Parent.Value)
+		if !Ok {
+			return NewErr(C.Token.Line, "Parent class not found: %s", C.Parent.Value)
+		}
+		if Cls, IsCls := ParentObj.(*Object.Class); IsCls {
+			ParentCls = Cls
+		} else {
+			return NewErr(C.Token.Line, "Not a class: %s", C.Parent.Value)
+		}
+	}
+
 	Methods := make(map[string]*Object.Func)
 	for _, M := range C.Methods {
 		Methods[M.Name] = &Object.Func{Params: M.Params, Env: Env, Body: M.Body}
 	}
-	Cls := &Object.Class{Name: C.Name.Value, Methods: Methods}
-	Env.Set(C.Name.Value, Cls)
+	Cls := &Object.Class{Name: C.Name.Value, Parent: ParentCls, Methods: Methods}
+	Env.SetConst(C.Name.Value, Cls)
 	return Cls
+}
+
+func EvalConst(C *Ast.ConstStmt, Env *Object.Environment) Object.Object {
+	Val := Eval(C.Value, Env)
+	if IsErr(Val) {
+		return Val
+	}
+	Env.SetConst(C.Name.Value, Val)
+	return NullObj
+}
+
+func EvalEnum(E *Ast.EnumStmt, Env *Object.Environment) Object.Object {
+	Cases := make(map[string]Object.Object)
+	for Idx, Case := range E.Cases {
+		Cases[Case.Value] = &Object.Num{Value: float64(Idx)}
+	}
+	EnumObj := &Object.Enum{Name: E.Name.Value, Cases: Cases}
+	Env.SetConst(E.Name.Value, EnumObj)
+	return NullObj
 }
 
 func EvalAssign(A *Ast.AssignExpr, Env *Object.Environment) Object.Object {
@@ -186,6 +248,9 @@ func EvalAssign(A *Ast.AssignExpr, Env *Object.Environment) Object.Object {
 	}
 	switch L := A.Left.(type) {
 	case *Ast.Ident:
+		if Env.IsImmutable(L.Value) {
+			return NewErr(A.Token.Line, "Cannot assign to constant: %s", L.Value)
+		}
 		Env.Set(L.Value, Val)
 		return Val
 	case *Ast.IndexExpr:
@@ -241,10 +306,20 @@ func EvalDot(Left Object.Object, Prop string, Line int) Object.Object {
 		if Val, Ok := Inst.Fields[Prop]; Ok {
 			return Val
 		}
-		if Method, Ok := Inst.Cls.Methods[Prop]; Ok {
-			return &Object.BoundMethod{Self: Inst, Method: Method}
+		Cls := Inst.Cls
+		for Cls != nil {
+			if Method, Ok := Cls.Methods[Prop]; Ok {
+				return &Object.BoundMethod{Self: Inst, Method: Method}
+			}
+			Cls = Cls.Parent
 		}
 		return NullObj
+	}
+	if Enm, Ok := Left.(*Object.Enum); Ok {
+		if Val, Ok := Enm.Cases[Prop]; Ok {
+			return Val
+		}
+		return NewErr(Line, "Enum case not found: %s", Prop)
 	}
 	return NewErr(Line, "Property access not supported for %s", Left.Type())
 }
@@ -259,12 +334,23 @@ func EvalNew(N *Ast.NewExpr, Env *Object.Environment) Object.Object {
 		return NewErr(N.Token.Line, "Not a class: %s", N.Class.Value)
 	}
 	Inst := &Object.Instance{Cls: Cls, Fields: make(map[string]Object.Object)}
-	if Method, Ok := Cls.Methods["Construct"]; Ok {
+	
+	ConstructCls := Cls
+	var ConstructMethod *Object.Func
+	for ConstructCls != nil {
+		if Method, Ok := ConstructCls.Methods["Construct"]; Ok {
+			ConstructMethod = Method
+			break
+		}
+		ConstructCls = ConstructCls.Parent
+	}
+
+	if ConstructMethod != nil {
 		Args := EvalExprs(N.Args, Env)
 		if len(Args) == 1 && IsErr(Args[0]) {
 			return Args[0]
 		}
-		Apply(&Object.BoundMethod{Self: Inst, Method: Method}, Args, N.Token.Line)
+		Apply(&Object.BoundMethod{Self: Inst, Method: ConstructMethod}, Args, N.Token.Line)
 	}
 	return Inst
 }
@@ -371,6 +457,11 @@ func EvalNumInfix(Op string, Left Object.Object, Right Object.Object, Line int) 
 			return NewErr(Line, "Division by zero")
 		}
 		return &Object.Num{Value: LV / RV}
+	case "%":
+		if RV == 0 {
+			return NewErr(Line, "Modulo by zero")
+		}
+		return &Object.Num{Value: float64(int(LV) % int(RV))}
 	case "<":
 		return NatToBool(LV < RV)
 	case ">":
@@ -450,7 +541,7 @@ func Apply(Fn Object.Object, Args []Object.Object, Line int) Object.Object {
 		return UnwrapRet(Ev)
 	case *Object.BoundMethod:
 		ExtEnv := ExtFuncEnv(F.Method, Args)
-		ExtEnv.Set("this", F.Self)
+		ExtEnv.Set("$this", F.Self)
 		Ev := Eval(F.Method.Body, ExtEnv)
 		return UnwrapRet(Ev)
 	case *Object.Builtin:

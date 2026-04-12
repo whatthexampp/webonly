@@ -59,6 +59,7 @@ func (H *HtmlStmt) String() string {
 type ClassStmt struct {
 	Token   Lexer.Token
 	Name    *Ident
+	Parent  *Ident
 	Methods []*FuncLit
 }
 
@@ -74,7 +75,49 @@ func (C *ClassStmt) String() string {
 	for _, M := range C.Methods {
 		MStr += M.String()
 	}
-	return "class " + C.Name.String() + ":\n" + MStr + "\nend;"
+	PStr := ""
+	if C.Parent != nil {
+		PStr = " extends " + C.Parent.String()
+	}
+	return "class " + C.Name.String() + PStr + ":\n" + MStr + "\nend;"
+}
+
+type ConstStmt struct {
+	Token Lexer.Token
+	Name  *Ident
+	Value Expression
+}
+
+func (C *ConstStmt) StmtNode() {
+}
+
+func (C *ConstStmt) TokenLit() string {
+	return C.Token.Lit
+}
+
+func (C *ConstStmt) String() string {
+	return "const " + C.Name.String() + " = " + C.Value.String() + ";"
+}
+
+type EnumStmt struct {
+	Token Lexer.Token
+	Name  *Ident
+	Cases []*Ident
+}
+
+func (E *EnumStmt) StmtNode() {
+}
+
+func (E *EnumStmt) TokenLit() string {
+	return E.Token.Lit
+}
+
+func (E *EnumStmt) String() string {
+	C := []string{}
+	for _, Case := range E.Cases {
+		C = append(C, Case.String())
+	}
+	return "enum " + E.Name.String() + ": " + strings.Join(C, ", ") + " end;"
 }
 
 type RetStmt struct {
@@ -149,7 +192,7 @@ func (W *WhileStmt) TokenLit() string {
 }
 
 func (W *WhileStmt) String() string {
-	return "while [" + W.Cond.String() + "]:\n" + W.Body.String() + "\nend;"
+	return "while (" + W.Cond.String() + "):\n" + W.Body.String() + "\nend;"
 }
 
 type Ident struct {
@@ -198,6 +241,21 @@ func (S *StrLit) TokenLit() string {
 
 func (S *StrLit) String() string {
 	return S.Token.Lit
+}
+
+type NullLit struct {
+	Token Lexer.Token
+}
+
+func (N *NullLit) ExprNode() {
+}
+
+func (N *NullLit) TokenLit() string {
+	return N.Token.Lit
+}
+
+func (N *NullLit) String() string {
+	return "null"
 }
 
 type ArrayLit struct {
@@ -343,9 +401,9 @@ func (I *IfExpr) TokenLit() string {
 }
 
 func (I *IfExpr) String() string {
-	Out := "if [" + I.Cond.String() + "]:\n" + I.Cons.String()
+	Out := "if (" + I.Cond.String() + "):\n" + I.Cons.String()
 	for _, E := range I.Elifs {
-		Out += "elseif [" + E.Cond.String() + "]:\n" + E.Cons.String()
+		Out += "elseif (" + E.Cond.String() + "):\n" + E.Cons.String()
 	}
 	if I.Alt != nil {
 		Out += "else:\n" + I.Alt.String()

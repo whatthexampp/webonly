@@ -22,6 +22,7 @@ const (
 	InstObj  ObjType = "Instance"
 	BoundObj ObjType = "BoundMethod"
 	BltObj   ObjType = "Builtin"
+	EnumObj  ObjType = "Enum"
 )
 
 type Object interface {
@@ -123,6 +124,7 @@ func (A *Array) Inspect() string {
 
 type Class struct {
 	Name    string
+	Parent  *Class
 	Methods map[string]*Func
 }
 
@@ -132,6 +134,19 @@ func (C *Class) Type() ObjType {
 
 func (C *Class) Inspect() string {
 	return "class " + C.Name
+}
+
+type Enum struct {
+	Name  string
+	Cases map[string]Object
+}
+
+func (E *Enum) Type() ObjType {
+	return EnumObj
+}
+
+func (E *Enum) Inspect() string {
+	return "enum " + E.Name
 }
 
 type Instance struct {
