@@ -23,6 +23,7 @@ const (
 	BoundObj ObjType = "BoundMethod"
 	BltObj   ObjType = "Builtin"
 	EnumObj  ObjType = "Enum"
+	ModObj   ObjType = "Module"
 )
 
 type Object interface {
@@ -185,4 +186,17 @@ func (B *Builtin) Type() ObjType {
 
 func (B *Builtin) Inspect() string {
 	return "Builtin Function"
+}
+
+type Module struct {
+	Name    string
+	Exports map[string]Object
+}
+
+func (M *Module) Type() ObjType {
+	return ModObj
+}
+
+func (M *Module) Inspect() string {
+	return "Module(" + M.Name + ")"
 }

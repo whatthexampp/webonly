@@ -49,11 +49,14 @@ const (
 	While    TokenType = "While"
 	Ret      TokenType = "Ret"
 	End      TokenType = "End"
+	Endif    TokenType = "Endif"
 	Class    TokenType = "Class"
 	Extends  TokenType = "Extends"
 	New      TokenType = "New"
 	Const    TokenType = "Const"
 	Enum     TokenType = "Enum"
+	Import   TokenType = "Import"
+	Public   TokenType = "Public"
 )
 
 var Keywords = map[string]TokenType{
@@ -67,11 +70,14 @@ var Keywords = map[string]TokenType{
 	"while":    While,
 	"return":   Ret,
 	"end":      End,
+	"endif":    Endif,
 	"class":    Class,
 	"extends":  Extends,
 	"new":      New,
 	"const":    Const,
 	"enum":     Enum,
+	"import":   Import,
+	"public":   Public,
 }
 
 func Lookup(Identifier string) TokenType {

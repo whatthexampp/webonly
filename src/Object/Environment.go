@@ -3,14 +3,18 @@ package Object
 type Environment struct {
 	Store     map[string]Object
 	Immutable map[string]bool
+	Publics   map[string]bool
 	Outer     *Environment
+	Modules   map[string]Object
 }
 
 func NewEnv() *Environment {
 	return &Environment{
 		Store:     make(map[string]Object),
 		Immutable: make(map[string]bool),
+		Publics:   make(map[string]bool),
 		Outer:     nil,
+		Modules:   make(map[string]Object),
 	}
 }
 
@@ -37,6 +41,10 @@ func (E *Environment) SetConst(Name string, Val Object) Object {
 	E.Store[Name] = Val
 	E.Immutable[Name] = true
 	return Val
+}
+
+func (E *Environment) SetPublic(Name string) {
+	E.Publics[Name] = true
 }
 
 func (E *Environment) IsImmutable(Name string) bool {

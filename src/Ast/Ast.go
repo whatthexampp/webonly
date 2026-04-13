@@ -461,7 +461,7 @@ func (C *CallExpr) String() string {
 
 type NewExpr struct {
 	Token Lexer.Token
-	Class *Ident
+	Class Expression
 	Args  []Expression
 }
 
@@ -478,4 +478,36 @@ func (N *NewExpr) String() string {
 		A = append(A, Arg.String())
 	}
 	return "new " + N.Class.String() + "(" + strings.Join(A, ", ") + ")"
+}
+
+type ImportExpr struct {
+	Token Lexer.Token
+	Path  Expression
+}
+
+func (I *ImportExpr) ExprNode() {
+}
+
+func (I *ImportExpr) TokenLit() string {
+	return I.Token.Lit
+}
+
+func (I *ImportExpr) String() string {
+	return "import " + I.Path.String()
+}
+
+type PublicStmt struct {
+	Token Lexer.Token
+	Stmt  Statement
+}
+
+func (P *PublicStmt) StmtNode() {
+}
+
+func (P *PublicStmt) TokenLit() string {
+	return P.Token.Lit
+}
+
+func (P *PublicStmt) String() string {
+	return "public " + P.Stmt.String()
 }

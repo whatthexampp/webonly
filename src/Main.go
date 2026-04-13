@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"webonly/src/Config"
@@ -109,7 +110,11 @@ func Handle(C net.Conn) {
 		Env.SetConst(K, V)
 	}
 
-	Res := Evaluator.Eval(Prog, Env)
+	MainEnv := Object.NewEncEnv(Env)
+	AbsPath, _ := filepath.Abs(Path)
+	MainEnv.SetConst("__FILE__", &Object.Str{Value: AbsPath})
+
+	Res := Evaluator.Eval(Prog, MainEnv)
 
 	if Evaluator.IsErr(Res) {
 		Msg := Res.(*Object.Err).Msg

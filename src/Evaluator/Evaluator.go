@@ -2,73 +2,65 @@ package Evaluator
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"webonly/src/Ast"
+	"webonly/src/Lexer"
 	"webonly/src/Object"
+	"webonly/src/Parser"
 )
-
 
 var (
 	TrueObj  = &Object.Bool{Value: true}
 	FalseObj = &Object.Bool{Value: false}
 	NullObj  = &Object.Null{}
 )
+
 func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 	switch N := Node.(type) {
 	case *Ast.Program:
-		//evaluate the root program node
 		return EvalProg(N, Env)
 	case *Ast.HtmlStmt:
-		//HTML to response stream
 		return EvalHtml(N, Env)
 	case *Ast.ClassStmt:
-		//New class definition
 		return EvalClass(N, Env)
 	case *Ast.WhileStmt:
-		//evaluate while loop until condition is false
 		return EvalWhile(N, Env)
 	case *Ast.ConstStmt:
 		return EvalConst(N, Env)
 	case *Ast.EnumStmt:
 		return EvalEnum(N, Env)
+	case *Ast.PublicStmt:
+		return EvalPublic(N, Env)
 	case *Ast.ExprStmt:
-		//evaluate a standalone expression statement
 		return Eval(N.Expr, Env)
 	case *Ast.BlockStmt:
-		// evaluate a block of statements exit early if a return or error is encountered
 		return EvalBlock(N, Env)
 	case *Ast.RetStmt:
-		//signal early exit....
 		Val := Eval(N.Value, Env)
 		if IsErr(Val) {
 			return Val
 		}
 		return &Object.Ret{Value: Val}
 	case *Ast.AssignExpr:
-		//assign variables, array or class
 		return EvalAssign(N, Env)
 	case *Ast.NumLit:
-		//return a literal numeric object
 		return &Object.Num{Value: N.Value}
 	case *Ast.StrLit:
-		//return a literal string object
 		return &Object.Str{Value: N.Value}
 	case *Ast.NullLit:
 		return NullObj
 	case *Ast.ArrayLit:
-		// evaluate all array elements to create a new array object
 		return EvalArray(N, Env)
 	case *Ast.Bool:
-		// convert a native Go boolean to its Webonly boolean object
 		return NatToBool(N.Value)
 	case *Ast.PrefixExpr:
-		// evaluate the right side and apply the prefix operator (e.g., ! or -)
 		Right := Eval(N.Right, Env)
 		if IsErr(Right) {
 			return Right
 		}
 		return EvalPre(N.Op, Right, N.Token.Line)
 	case *Ast.InfixExpr:
-		// evaluate both sides and apply the binary operator
 		Left := Eval(N.Left, Env)
 		if IsErr(Left) {
 			return Left
@@ -99,7 +91,6 @@ func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 		}
 		return EvalInfix(N.Op, Left, Right, N.Token.Line)
 	case *Ast.IndexExpr:
-		// access a specific element of an array using a numeric index
 		Left := Eval(N.Left, Env)
 		if IsErr(Left) {
 			return Left
@@ -110,30 +101,24 @@ func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 		}
 		return EvalIndex(Left, Index, N.Token.Line)
 	case *Ast.DotExpr:
-		//access a field or method on a given class instance
 		Left := Eval(N.Left, Env)
 		if IsErr(Left) {
 			return Left
 		}
 		return EvalDot(Left, N.Right.Value, N.Token.Line)
 	case *Ast.NewExpr:
-		//create a new object from a class and invoke  Construct method if present
 		return EvalNew(N, Env)
 	case *Ast.IfExpr:
-		//evaluate conditional branches, returning the result of the matched block
 		return EvalIf(N, Env)
 	case *Ast.Ident:
-		//find a variable or function name in the environment scope
 		return EvalIdent(N, Env)
 	case *Ast.FuncLit:
-		//create a new function object, capturing the current environment for closures
 		FnObj := &Object.Func{Params: N.Params, Env: Env, Body: N.Body}
 		if N.Name != "" {
 			Env.SetConst(N.Name, FnObj)
 		}
 		return FnObj
 	case *Ast.CallExpr:
-		// evaluate the target function and its arguments, then execute the function call
 		Func := Eval(N.Func, Env)
 		if IsErr(Func) {
 			return Func
@@ -143,6 +128,8 @@ func Eval(Node Ast.Node, Env *Object.Environment) Object.Object {
 			return Args[0]
 		}
 		return Apply(Func, Args, N.Token.Line)
+	case *Ast.ImportExpr:
+		return EvalImport(N, Env)
 	}
 	return nil
 }
@@ -241,6 +228,39 @@ func EvalEnum(E *Ast.EnumStmt, Env *Object.Environment) Object.Object {
 	return NullObj
 }
 
+func EvalPublic(P *Ast.PublicStmt, Env *Object.Environment) Object.Object {
+	Res := Eval(P.Stmt, Env)
+	if IsErr(Res) {
+		return Res
+	}
+	Names := ExtractPublicNames(P.Stmt)
+	for _, Name := range Names {
+		Env.SetPublic(Name)
+	}
+	return Res
+}
+
+func ExtractPublicNames(Node Ast.Node) []string {
+	switch N := Node.(type) {
+	case *Ast.ExprStmt:
+		if Asgn, Ok := N.Expr.(*Ast.AssignExpr); Ok {
+			if Id, Ok := Asgn.Left.(*Ast.Ident); Ok {
+				return []string{Id.Value}
+			}
+		}
+		if Fn, Ok := N.Expr.(*Ast.FuncLit); Ok && Fn.Name != "" {
+			return []string{Fn.Name}
+		}
+	case *Ast.ClassStmt:
+		return []string{N.Name.Value}
+	case *Ast.ConstStmt:
+		return []string{N.Name.Value}
+	case *Ast.EnumStmt:
+		return []string{N.Name.Value}
+	}
+	return nil
+}
+
 func EvalAssign(A *Ast.AssignExpr, Env *Object.Environment) Object.Object {
 	Val := Eval(A.Value, Env)
 	if IsErr(Val) {
@@ -302,6 +322,12 @@ func EvalIndex(Left Object.Object, Index Object.Object, Line int) Object.Object 
 }
 
 func EvalDot(Left Object.Object, Prop string, Line int) Object.Object {
+	if Mod, Ok := Left.(*Object.Module); Ok {
+		if Val, Ok := Mod.Exports[Prop]; Ok {
+			return Val
+		}
+		return NewErr(Line, "Export not found: %s", Prop)
+	}
 	if Inst, Ok := Left.(*Object.Instance); Ok {
 		if Val, Ok := Inst.Fields[Prop]; Ok {
 			return Val
@@ -325,16 +351,16 @@ func EvalDot(Left Object.Object, Prop string, Line int) Object.Object {
 }
 
 func EvalNew(N *Ast.NewExpr, Env *Object.Environment) Object.Object {
-	Obj, Ok := Env.Get(N.Class.Value)
-	if !Ok {
-		return NewErr(N.Token.Line, "Class not found: %s", N.Class.Value)
+	ClsObj := Eval(N.Class, Env)
+	if IsErr(ClsObj) {
+		return ClsObj
 	}
-	Cls, Ok := Obj.(*Object.Class)
+	Cls, Ok := ClsObj.(*Object.Class)
 	if !Ok {
-		return NewErr(N.Token.Line, "Not a class: %s", N.Class.Value)
+		return NewErr(N.Token.Line, "Not a class: %s", N.Class.String())
 	}
 	Inst := &Object.Instance{Cls: Cls, Fields: make(map[string]Object.Object)}
-	
+
 	ConstructCls := Cls
 	var ConstructMethod *Object.Func
 	for ConstructCls != nil {
@@ -361,7 +387,80 @@ func EvalHtml(H *Ast.HtmlStmt, Env *Object.Environment) Object.Object {
 			BuiltinOut.Fn(&Object.Str{Value: H.Value})
 		}
 	}
-	return NullObj
+	return &Object.Str{Value: H.Value}
+}
+
+func EvalImport(I *Ast.ImportExpr, Env *Object.Environment) Object.Object {
+	PathObj := Eval(I.Path, Env)
+	if IsErr(PathObj) {
+		return PathObj
+	}
+	if PathObj.Type() != Object.StrObj {
+		return NewErr(I.Token.Line, "Import path must be a string")
+	}
+
+	RelPath := PathObj.(*Object.Str).Value
+
+	var CurrentFile string
+	if FileObj, Ok := Env.Get("__FILE__"); Ok && FileObj.Type() == Object.StrObj {
+		CurrentFile = FileObj.(*Object.Str).Value
+	}
+
+	var TargetPath string
+	if filepath.IsAbs(RelPath) {
+		TargetPath = RelPath
+	} else if CurrentFile != "" {
+		TargetPath = filepath.Join(filepath.Dir(CurrentFile), RelPath)
+	} else {
+		TargetPath = RelPath
+	}
+
+	TargetPath = filepath.Clean(TargetPath)
+
+	GlobalEnv := Env
+	for GlobalEnv.Outer != nil {
+		GlobalEnv = GlobalEnv.Outer
+	}
+
+	if Cached, Ok := GlobalEnv.Modules[TargetPath]; Ok {
+		return Cached
+	}
+
+	Src, Err := os.ReadFile(TargetPath)
+	if Err != nil {
+		return NewErr(I.Token.Line, "Failed to import file: %s", TargetPath)
+	}
+
+	Lex := Lexer.Create(string(Src))
+	Par := Parser.Create(Lex)
+	Prog := Par.ParseProg()
+
+	if len(Par.Errs) > 0 {
+		return NewErr(I.Token.Line, "Parse error in imported file %s: %s", TargetPath, Par.Errs[0])
+	}
+
+	GlobalEnv.Modules[TargetPath] = NullObj
+
+	ModEnv := Object.NewEncEnv(GlobalEnv)
+	ModEnv.SetConst("__FILE__", &Object.Str{Value: TargetPath})
+
+	Res := EvalProg(Prog, ModEnv)
+
+	if IsErr(Res) {
+		delete(GlobalEnv.Modules, TargetPath)
+		return Res
+	}
+
+	Exports := make(map[string]Object.Object)
+	for Name := range ModEnv.Publics {
+		if Val, Ok := ModEnv.Get(Name); Ok {
+			Exports[Name] = Val
+		}
+	}
+	Mod := &Object.Module{Name: TargetPath, Exports: Exports}
+
+	GlobalEnv.Modules[TargetPath] = Mod
+	return Mod
 }
 
 func NatToBool(In bool) *Object.Bool {

@@ -3,6 +3,7 @@ package Parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"webonly/src/Ast"
 	"webonly/src/Lexer"
 )
@@ -19,6 +20,7 @@ const (
 	Prefix
 	Call
 	IndexPrec
+	DotPrec
 )
 
 var Precs = map[Lexer.TokenType]int{
@@ -35,8 +37,8 @@ var Precs = map[Lexer.TokenType]int{
 	Lexer.Ast:      Prod,
 	Lexer.Modulo:   Prod,
 	Lexer.Lparen:   Call,
-	Lexer.Dot:      Call,
 	Lexer.Lbracket: IndexPrec,
+	Lexer.Dot:      DotPrec,
 }
 
 type PrefixFn func() Ast.Expression
@@ -67,6 +69,7 @@ func Create(L *Lexer.Lexer) *Parser {
 	P.RegPre(Lexer.If, P.ParseIf)
 	P.RegPre(Lexer.Func, P.ParseFunc)
 	P.RegPre(Lexer.New, P.ParseNew)
+	P.RegPre(Lexer.Import, P.ParseImport)
 	P.InFns = make(map[Lexer.TokenType]InfixFn)
 	P.RegIn(Lexer.Plus, P.ParseInfix)
 	P.RegIn(Lexer.Minus, P.ParseInfix)
@@ -118,6 +121,8 @@ func (P *Parser) ParseStmt() Ast.Statement {
 		return P.ParseConst()
 	case Lexer.Enum:
 		return P.ParseEnum()
+	case Lexer.Public:
+		return P.ParsePublic()
 	default:
 		return P.ParseExprStmt()
 	}
@@ -172,6 +177,9 @@ func (P *Parser) ParseConst() *Ast.ConstStmt {
 	if !P.Exp(Lexer.Ident) {
 		return nil
 	}
+	if !strings.HasPrefix(P.Cur.Lit, "$") {
+		P.Errs = append(P.Errs, fmt.Sprintf("Constant %s must start with '$' at line %d", P.Cur.Lit, P.Cur.Line))
+	}
 	Stmt.Name = &Ast.Ident{Token: P.Cur, Value: P.Cur.Lit}
 	if !P.Exp(Lexer.Assign) {
 		return nil
@@ -210,6 +218,16 @@ func (P *Parser) ParseEnum() *Ast.EnumStmt {
 		P.Next()
 	}
 	return Stmt
+}
+
+func (P *Parser) ParsePublic() *Ast.PublicStmt {
+	PubToken := P.Cur
+	P.Next()
+	Stmt := P.ParseStmt()
+	if Stmt == nil {
+		return nil
+	}
+	return &Ast.PublicStmt{Token: PubToken, Stmt: Stmt}
 }
 
 func (P *Parser) ParseWhile() *Ast.WhileStmt {
@@ -335,28 +353,42 @@ func (P *Parser) ParseGroup() Ast.Expression {
 
 func (P *Parser) ParseIf() Ast.Expression {
 	E := &Ast.IfExpr{Token: P.Cur, Elifs: []*Ast.ElseifBlock{}}
-	if !P.Exp(Lexer.Lparen) {
-		return nil
+	HasParen := false
+	if P.Peek.Type == Lexer.Lparen {
+		P.Next()
+		HasParen = true
 	}
 	P.Next()
 	E.Cond = P.ParseExpr(Lowest)
-	if !P.Exp(Lexer.Rparen) || !P.Exp(Lexer.Colon) {
+	if HasParen {
+		if !P.Exp(Lexer.Rparen) {
+			return nil
+		}
+	}
+	if !P.Exp(Lexer.Colon) {
 		return nil
 	}
 	P.Next()
-	E.Cons = P.ParseBlock(Lexer.Elseif, Lexer.Else, Lexer.End)
+	E.Cons = P.ParseBlock(Lexer.Elseif, Lexer.Else, Lexer.End, Lexer.Endif)
 	for P.Cur.Type == Lexer.Elseif {
 		Elif := &Ast.ElseifBlock{}
-		if !P.Exp(Lexer.Lparen) {
-			return nil
+		HasParenElif := false
+		if P.Peek.Type == Lexer.Lparen {
+			P.Next()
+			HasParenElif = true
 		}
 		P.Next()
 		Elif.Cond = P.ParseExpr(Lowest)
-		if !P.Exp(Lexer.Rparen) || !P.Exp(Lexer.Colon) {
+		if HasParenElif {
+			if !P.Exp(Lexer.Rparen) {
+				return nil
+			}
+		}
+		if !P.Exp(Lexer.Colon) {
 			return nil
 		}
 		P.Next()
-		Elif.Cons = P.ParseBlock(Lexer.Elseif, Lexer.Else, Lexer.End)
+		Elif.Cons = P.ParseBlock(Lexer.Elseif, Lexer.Else, Lexer.End, Lexer.Endif)
 		E.Elifs = append(E.Elifs, Elif)
 	}
 	if P.Cur.Type == Lexer.Else {
@@ -364,10 +396,10 @@ func (P *Parser) ParseIf() Ast.Expression {
 			return nil
 		}
 		P.Next()
-		E.Alt = P.ParseBlock(Lexer.End)
+		E.Alt = P.ParseBlock(Lexer.End, Lexer.Endif)
 	}
-	if P.Cur.Type != Lexer.End {
-		P.Errs = append(P.Errs, fmt.Sprintf("Expected end, got %s at line %d", P.Cur.Type, P.Cur.Line))
+	if P.Cur.Type != Lexer.End && P.Cur.Type != Lexer.Endif {
+		P.Errs = append(P.Errs, fmt.Sprintf("Expected end or endif, got %s at line %d", P.Cur.Type, P.Cur.Line))
 	}
 	return E
 }
@@ -481,14 +513,19 @@ func (P *Parser) ParseDot(Left Ast.Expression) Ast.Expression {
 
 func (P *Parser) ParseNew() Ast.Expression {
 	E := &Ast.NewExpr{Token: P.Cur}
-	if !P.Exp(Lexer.Ident) {
-		return nil
-	}
-	E.Class = &Ast.Ident{Token: P.Cur, Value: P.Cur.Lit}
+	P.Next()
+	E.Class = P.ParseExpr(Call)
 	if !P.Exp(Lexer.Lparen) {
 		return nil
 	}
 	E.Args = P.ParseExprList(Lexer.Rparen)
+	return E
+}
+
+func (P *Parser) ParseImport() Ast.Expression {
+	E := &Ast.ImportExpr{Token: P.Cur}
+	P.Next()
+	E.Path = P.ParseExpr(Prefix)
 	return E
 }
 
